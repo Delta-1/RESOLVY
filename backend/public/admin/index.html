@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Resolvy · Painel</title>
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+  <!-- Login -->
+  <main id="login-view" class="center" hidden>
+    <form id="login-form" class="card narrow">
+      <h1>Resolvy</h1>
+      <p class="muted">Painel administrativo</p>
+      <label>Senha
+        <input type="password" id="login-password" autocomplete="current-password" required />
+      </label>
+      <button type="submit">Entrar</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </main>
+
+  <!-- Painel -->
+  <div id="app-view" hidden>
+    <header class="topbar">
+      <strong>Resolvy</strong>
+      <button id="logout" class="ghost">Sair</button>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <h2>Provedor de IA</h2>
+        <p class="muted" id="enc-status"></p>
+        <form id="settings-form" class="grid">
+          <label>Provedor ativo
+            <select id="provider">
+              <option value="gemini">Google Gemini</option>
+              <option value="openai">OpenAI</option>
+              <option value="mock">Teste (sem IA)</option>
+            </select>
+          </label>
+
+          <fieldset>
+            <legend>Google Gemini</legend>
+            <label>Modelo <input id="gemini_model" placeholder="gemini-2.5-flash" /></label>
+            <label>Chave da API <span class="hint" id="gemini_key_hint"></span>
+              <input id="gemini_api_key" type="password" autocomplete="off" placeholder="Deixe vazio para manter a atual" />
+            </label>
+            <button type="button" class="ghost small" data-clear="gemini_api_key">Remover chave</button>
+          </fieldset>
+
+          <fieldset>
+            <legend>OpenAI</legend>
+            <label>Modelo <input id="openai_model" placeholder="gpt-4o-mini" /></label>
+            <label>Chave da API <span class="hint" id="openai_key_hint"></span>
+              <input id="openai_api_key" type="password" autocomplete="off" placeholder="Deixe vazio para manter a atual" />
+            </label>
+            <button type="button" class="ghost small" data-clear="openai_api_key">Remover chave</button>
+          </fieldset>
+
+          <div class="row">
+            <button type="submit">Salvar configurações</button>
+            <span id="settings-msg" class="muted" role="status"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Códigos de acesso</h2>
+        <form id="code-form" class="row wrap">
+          <input id="code-label" placeholder="Identificação (ex.: Maria – Financeiro)" maxlength="100" />
+          <input id="code-days" type="number" min="1" max="3650" placeholder="Validade (dias, opcional)" />
+          <button type="submit">Gerar código</button>
+        </form>
+
+        <div id="new-code" class="new-code" hidden>
+          <p>Novo código gerado. <strong>Copie agora</strong> — ele não será exibido novamente.</p>
+          <div class="row">
+            <code id="new-code-value"></code>
+            <button type="button" id="copy-code" class="ghost small">Copiar</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th><th>Identificação</th><th>Status</th>
+                <th>Expira</th><th>Usos</th><th>Último uso</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="codes-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>
