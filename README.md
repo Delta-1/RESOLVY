@@ -1,119 +1,150 @@
 # Resolvy
 
-Assistente de leitura e acessibilidade web com IA, composto por:
+Assistente de leitura e acessibilidade web com IA, em três partes:
 
-- **Backend (Node.js + Express):** guarda as chaves de API (Gemini/OpenAI) criptografadas, gerencia códigos de acesso e expõe a API de análise. Inclui um painel administrativo web.
-- **Extensão do Chrome (Manifest V3):** extrai o texto da página ativa, envia ao servidor e mostra a resposta num widget discreto no canto inferior direito. Pode destacar e (com confirmação) clicar em elementos sugeridos pela IA.
+| Parte | Onde roda | Pasta |
+|---|---|---|
+| **API** (Node.js + Express + SQLite) | Railway | `backend/` |
+| **Painel administrativo** (HTML estático) | GitHub Pages | `docs/` |
+| **Extensão do Chrome** (Manifest V3) | Navegador de cada usuário | `extension/` |
+
+```
+ GitHub Pages (docs/)                Railway (backend/)                    Gemini / OpenAI
+ ┌──────────────────┐  HTTPS+token  ┌───────────────────────┐   chave da API  ┌──────────┐
+ │ Painel admin     │ ────────────▶ │ /admin/api/*          │ ──────────────▶ │    IA    │
+ └──────────────────┘               │ /api/auth/verify      │                 └──────────┘
+ ┌──────────────────┐ HTTPS+código  │ /api/analyze          │
+ │ Extensão Chrome  │ ────────────▶ │ SQLite no Volume      │
+ └──────────────────┘               └───────────────────────┘
+```
 
 ## Estrutura
 
 ```
 resolvy/
-├── backend/
+├── backend/                    # → Railway (Root Directory = backend)
+│   ├── railway.json            # build Railpack, healthcheck /health
+│   ├── .node-version           # Node 22
+│   ├── .env.example            # variáveis de ambiente documentadas
 │   ├── package.json
-│   ├── .env.example            # modelo de configuração
-│   ├── src/
-│   │   ├── server.js           # Express: API pública + API do painel
-│   │   ├── db.js               # SQLite (node:sqlite), criptografia, códigos de acesso
-│   │   └── ai.js               # Prompts e chamadas ao Gemini / OpenAI
-│   └── public/admin/           # Painel administrativo (HTML/CSS/JS puro)
-│       ├── index.html
-│       ├── admin.css
-│       └── admin.js
-└── extension/
+│   └── src/
+│       ├── server.js           # rotas, CORS, autenticação
+│       ├── db.js               # SQLite, criptografia, códigos, sessões do painel
+│       └── ai.js               # prompts e chamadas ao Gemini / OpenAI
+├── docs/                       # → GitHub Pages (pasta /docs)
+│   ├── index.html              # painel administrativo
+│   ├── config.js               # ← coloque aqui a URL do Railway
+│   ├── admin.js
+│   └── admin.css
+└── extension/                  # → chrome://extensions (Carregar sem compactação)
+    ├── config.js               # ← coloque aqui a URL do Railway
     ├── manifest.json
-    ├── background.js           # Service worker: única parte que fala com o servidor
-    ├── content.js              # Extração de texto, mapeamento de elementos, widget, destaque/clique
-    ├── popup/                  # Login com código de acesso + botões de análise
-    │   ├── popup.html
-    │   ├── popup.css
-    │   └── popup.js
+    ├── background.js           # única parte que conversa com o servidor
+    ├── content.js              # extração de texto, widget, destaque/clique
+    ├── popup/
     └── icons/
 ```
 
-## Como funciona
+---
 
-```
- Popup ──(código)──▶ background.js ──POST /api/auth/verify──▶ Servidor
-                         │
- Usuário clica "Resumir" │ injeta content.js na aba (activeTab)
-                         ▼
- content.js extrai texto + lista de elementos (r0, r1, …)
-        │  chrome.runtime.sendMessage
-        ▼
- background.js ──POST /api/analyze (Authorization: Bearer <código>)──▶ Servidor ──▶ Gemini/OpenAI
-        │                                                                 │
-        ◀────────────── { answer, actions: [{element_id, action}] } ◀─────┘
-        ▼
- content.js mostra o widget, destaca elementos e oferece "Clicar" (com confirmação)
-```
+## Deploy passo a passo
 
-- O **código de acesso nunca chega à página** visitada: só o service worker o conhece.
-- A **chave da IA nunca sai do servidor**.
-- Os valores digitados pelo usuário em campos de formulário **não são enviados** (apenas os rótulos).
-- Se houver texto selecionado na página, só a seleção é analisada.
+### 1. Backend no Railway
 
-## 1. Rodando o backend
+1. Em [railway.com](https://railway.com): **New Project → Deploy from GitHub repo →** `Delta-1/RESOLVY`.
+2. No serviço criado, abra **Settings**:
+   - **Source → Root Directory:** `backend`
+   - **Source → Branch:** o branch que contém este código.
+   - **Networking → Generate Domain** — gera algo como `https://resolvy-production.up.railway.app`.
+3. **Adicione um Volume** (clique com o botão direito no serviço → *Attach Volume*, ou `Ctrl/⌘ + K` → *Volume*). Mount path: `/data`.
+   O servidor detecta o volume sozinho (`RAILWAY_VOLUME_MOUNT_PATH`) e salva o banco em `/data/resolvy.db`.
+   **Sem volume, códigos e chaves são apagados a cada deploy.**
+4. Em **Variables**, cadastre:
 
-Requer **Node.js 22.5+** (usa o SQLite nativo do Node, sem compilação).
+   | Variável | Valor |
+   |---|---|
+   | `ADMIN_PASSWORD` | senha forte do painel (obrigatória) |
+   | `ENCRYPTION_KEY` | gere com `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` — não troque depois |
+   | `ADMIN_ORIGINS` | `https://delta-1.github.io` (origem do GitHub Pages, sem caminho) |
+   | `ALLOWED_EXTENSION_IDS` | deixe vazio por enquanto; preencha no passo 4 |
+
+5. Aguarde o deploy e teste: `https://SEU-APP.up.railway.app/health` deve responder `{"ok":true}`.
+   Os logs de início mostram o caminho do banco e as origens permitidas.
+
+O `railway.json` já configura o build (Railpack), o comando `npm start`, o healthcheck e o reinício automático. `PORT` e o proxy HTTPS são detectados automaticamente.
+
+### 2. Painel no GitHub Pages
+
+1. Edite `docs/config.js` e coloque a URL do Railway:
+   ```js
+   window.RESOLVY_CONFIG = { apiUrl: 'https://resolvy-production.up.railway.app' };
+   ```
+   (Se deixar vazio, o painel pede o endereço na tela de login.)
+2. Faça commit e push.
+3. No GitHub: **Settings → Pages → Build and deployment → Source: Deploy from a branch →** escolha o branch e a pasta **`/docs`** → *Save*.
+4. Em ~1 minuto o painel estará em `https://delta-1.github.io/RESOLVY/`.
+5. Entre com a `ADMIN_PASSWORD`, escolha o provedor (Gemini/OpenAI), cole a chave da API e gere os códigos de acesso.
+
+> O painel usa um token de sessão (válido por 8 h, guardado só na aba) em vez de cookies, porque o GitHub Pages e o Railway são domínios diferentes. O painel é público, mas não contém nenhum segredo: tudo exige a senha.
+
+### 3. Extensão
+
+1. Edite `extension/config.js`:
+   ```js
+   const RESOLVY_DEFAULT_SERVER = 'https://resolvy-production.up.railway.app';
+   ```
+2. `chrome://extensions` → ative **Modo do desenvolvedor** → **Carregar sem compactação** → pasta `extension/`.
+3. Clique no ícone do Resolvy, cole um código de acesso e **Entrar**.
+
+Para distribuir a outras pessoas: compacte a pasta `extension/` em `.zip` (ou publique na Chrome Web Store, o que mantém o mesmo ID para todos).
+
+### 4. Fechar a API só para a sua extensão (recomendado)
+
+1. Copie o **ID** da extensão em `chrome://extensions`.
+2. No Railway, defina `ALLOWED_EXTENSION_IDS=<id>` (vários separados por vírgula).
+
+O ID de uma extensão carregada sem compactação muda se a pasta mudar de lugar; o da Web Store é fixo.
+
+---
+
+## Desenvolvimento local
 
 ```bash
 cd backend
-cp .env.example .env
-# edite .env: defina ADMIN_PASSWORD e ENCRYPTION_KEY
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # gera uma ENCRYPTION_KEY
+cp .env.example .env      # defina ADMIN_PASSWORD e ENCRYPTION_KEY
 npm install
-npm start
+npm start                 # http://localhost:3000/admin serve o painel de ../docs
 ```
 
-Abra `http://localhost:3000/admin`, entre com a `ADMIN_PASSWORD` e:
+Com `docs/config.js` vazio, o painel local usa o próprio servidor. A extensão usa `http://localhost:3000` por padrão. Use o provedor **"Teste (sem IA)"** para testar sem gastar créditos.
 
-1. Escolha o provedor (Gemini ou OpenAI), o modelo, e cole a chave de API. Salve.
-   - Use o provedor **"Teste (sem IA)"** para testar a extensão sem gastar créditos.
-2. Em **Códigos de acesso**, gere um código (ex.: `RSV-7KQ2-M9XP-4HTA`). Ele é mostrado **uma única vez** — copie-o. No banco fica só o hash.
-3. Na tabela você pode revogar, reativar ou excluir códigos e ver uso.
-
-### API
+## API
 
 | Método | Rota | Auth | Descrição |
 |---|---|---|---|
+| GET | `/health` | — | Healthcheck |
 | POST | `/api/auth/verify` | — | `{code}` → `{valid, label, expires_at}` |
-| POST | `/api/analyze` | `Bearer <código>` | `{text, mode, question?, url, title, elements[]}` → `{answer, actions[]}` |
-| GET | `/health` | — | Verificação de saúde |
-| * | `/admin/api/*` | cookie de sessão | Login, configurações e códigos |
+| POST | `/api/analyze` | `Bearer <código de acesso>` | `{text, mode, question?, url, title, elements[]}` → `{answer, actions[]}` |
+| POST | `/admin/api/login` | — | `{password}` → `{token}` |
+| GET/PUT | `/admin/api/settings` | `Bearer <token>` | Provedor, modelos e chaves (mascaradas) |
+| GET/POST | `/admin/api/codes` | `Bearer <token>` | Listar / criar códigos |
+| PATCH/DELETE | `/admin/api/codes/:id` | `Bearer <token>` | Revogar/reativar / excluir |
 
 Modos de `/api/analyze`: `resumo`, `acessibilidade`, `pergunta`.
 
-## 2. Instalando a extensão
+## Interação com o DOM
 
-1. Abra `chrome://extensions` e ative o **Modo do desenvolvedor**.
-2. Clique em **Carregar sem compactação** e selecione a pasta `extension/`.
-3. Clique no ícone do Resolvy, abra **Servidor**, informe o endereço (padrão `http://localhost:3000`), cole o código de acesso e clique em **Entrar**.
-4. Em qualquer página: **Resumir página**, **Guia de acessibilidade** ou faça uma **pergunta**. Atalho: `Alt+Shift+R` (resumo).
-
-## 3. Conectando as duas partes em produção (HTTPS)
-
-A extensão só aceita `https://` (ou `http://localhost` em desenvolvimento).
-
-1. Publique o `backend/` num serviço com HTTPS (Railway, Render, Fly.io, VPS com Nginx + Let's Encrypt…).
-   - Defina as variáveis do `.env` no painel do serviço.
-   - Use `TRUST_PROXY=1` quando houver proxy reverso na frente (necessário para o rate limit e cookies `secure`).
-   - Garanta um disco persistente para `DATABASE_PATH`.
-2. Copie o **ID da extensão** em `chrome://extensions` e coloque em `ALLOWED_EXTENSION_IDS` (o servidor recusa outras origens). Com a variável vazia, qualquer extensão é aceita — use só em desenvolvimento.
-3. No popup, informe `https://seu-dominio.com` como servidor.
-
-## Recurso avançado: interação com o DOM
-
-- O `content.js` atribui um id curto (`r0`, `r1`…) a cada elemento interativo visível (links, botões, campos, `role="button"` etc.) e envia a lista com o texto.
-- A IA devolve `actions` com `element_id` e `action` (`highlight` ou `click`). O servidor descarta ids inexistentes.
-- **Mostrar:** rola até o elemento e aplica um contorno cinza (`data-resolvy-highlight`).
-- **Clicar:** exige dois toques ("Clicar" → "Confirmar clique"). Campos de texto recebem apenas foco. O prompt instrui a IA a nunca sugerir cliques em ações destrutivas ou de pagamento.
+- O `content.js` atribui ids curtos (`r0`, `r1`…) aos elementos interativos visíveis e envia a lista junto com o texto.
+- A IA devolve `actions` com `element_id` e `action` (`highlight` ou `click`); o servidor descarta ids inexistentes.
+- **Mostrar:** rola até o elemento e aplica um contorno cinza.
+- **Clicar:** exige dois toques ("Clicar" → "Confirmar clique"). Campos de texto recebem apenas foco.
 - `Esc` fecha o widget e remove os destaques.
 
 ## Segurança
 
-- Senha do painel comparada em tempo constante; sessão em cookie `httpOnly` + `SameSite=Strict`.
-- Rate limit no login do painel, na verificação de códigos e na análise.
-- Chaves de API criptografadas com AES-256-GCM (`ENCRYPTION_KEY`); o painel só mostra os 4 últimos caracteres.
-- Códigos de acesso armazenados como hash SHA-256, com validade opcional e revogação.
-- O texto da página é tratado como dado no prompt (defesa básica contra prompt injection).
+- Senha do painel comparada em tempo constante; sessões com token aleatório (só o hash fica no banco).
+- CORS: painel só a partir de `ADMIN_ORIGINS`; API só a partir de `chrome-extension://` (e dos IDs em `ALLOWED_EXTENSION_IDS`).
+- Rate limit no login, na verificação de códigos e na análise (com o IP real atrás do proxy do Railway).
+- Chaves de API criptografadas com AES-256-GCM; o painel só mostra os 4 últimos caracteres.
+- Códigos de acesso armazenados como hash SHA-256, com validade e revogação.
+- Valores digitados em formulários nunca são enviados; o texto da página é tratado como dado no prompt.

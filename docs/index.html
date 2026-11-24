@@ -12,6 +12,9 @@
     <form id="login-form" class="card narrow">
       <h1>Resolvy</h1>
       <p class="muted">Painel administrativo</p>
+      <label id="server-field">Servidor (Railway)
+        <input type="url" id="login-server" placeholder="https://seu-app.up.railway.app" />
+      </label>
       <label>Senha
         <input type="password" id="login-password" autocomplete="current-password" required />
       </label>
@@ -23,7 +26,7 @@
   <!-- Painel -->
   <div id="app-view" hidden>
     <header class="topbar">
-      <strong>Resolvy</strong>
+      <div><strong>Resolvy</strong> <span id="server-label" class="server-label"></span></div>
       <button id="logout" class="ghost">Sair</button>
     </header>
 
@@ -96,6 +99,7 @@
     </main>
   </div>
 
+  <script src="config.js"></script>
   <script src="admin.js"></script>
 </body>
 </html>

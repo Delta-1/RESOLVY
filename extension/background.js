@@ -1,7 +1,8 @@
 // Service worker da extensão Resolvy.
 // Centraliza toda a comunicação com o servidor: o content script nunca vê o código de acesso.
 
-const DEFAULT_SERVER = 'http://localhost:3000';
+importScripts('config.js');
+const DEFAULT_SERVER = RESOLVY_DEFAULT_SERVER;
 
 async function getConfig() {
   const { serverUrl = DEFAULT_SERVER, accessCode = '' } = await chrome.storage.local.get(['serverUrl', 'accessCode']);

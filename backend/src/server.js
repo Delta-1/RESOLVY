@@ -3,10 +3,12 @@ import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import {
+  dbPath,
   getPublicSettings,
   setSetting,
   createAccessCode,
@@ -14,6 +16,9 @@ import {
   setAccessCodeActive,
   deleteAccessCode,
   validateAccessCode,
+  createAdminSession,
+  isValidAdminSession,
+  deleteAdminSession,
 } from './db.js';
 import { analyze, MODES } from './ai.js';
 
@@ -21,54 +26,76 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const MAX_TEXT_CHARS = Number(process.env.MAX_TEXT_CHARS || 15000);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ON_RAILWAY = Boolean(process.env.RAILWAY_ENVIRONMENT);
 
-if (!ADMIN_PASSWORD || ADMIN_PASSWORD === 'troque-esta-senha') {
-  console.warn('⚠️  Defina ADMIN_PASSWORD no arquivo .env antes de usar em produção.');
+if (!ADMIN_PASSWORD) {
+  console.error('❌ Defina a variável ADMIN_PASSWORD (no .env ou nas Variables do Railway).');
+  process.exit(1);
 }
+if (ADMIN_PASSWORD.length < 10) console.warn('⚠️  ADMIN_PASSWORD curta: use pelo menos 10 caracteres.');
 if (!process.env.ENCRYPTION_KEY) {
   console.warn('⚠️  ENCRYPTION_KEY não definida: as chaves de API serão salvas sem criptografia.');
 }
 
-const app = express();
-if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
+const csv = (v) => (v || '').split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
+const allowedExtensionIds = csv(process.env.ALLOWED_EXTENSION_IDS);
+const adminOrigins = csv(process.env.ADMIN_ORIGINS); // ex.: https://delta-1.github.io
 
-app.use(helmet());
+const app = express();
+// O Railway (e a maioria das hospedagens) fica atrás de um proxy HTTPS.
+if (process.env.TRUST_PROXY === '1' || (ON_RAILWAY && process.env.TRUST_PROXY !== '0')) app.set('trust proxy', 1);
+
+// A API é consumida por outra origem (GitHub Pages e a extensão).
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(express.json({ limit: '300kb' }));
 
 /* ------------------------------------------------------------------ */
-/* CORS: apenas para a extensão (chrome-extension://<id>)               */
+/* CORS                                                                 */
 /* ------------------------------------------------------------------ */
-const allowedIds = (process.env.ALLOWED_EXTENSION_IDS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function isAllowedOrigin(origin) {
-  if (!origin?.startsWith('chrome-extension://')) return false;
-  if (allowedIds.length === 0) return true; // modo desenvolvimento
-  return allowedIds.includes(origin.slice('chrome-extension://'.length));
+function cors(isAllowed) {
+  return (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      if (!isAllowed(origin)) return res.status(403).json({ error: `Origem não autorizada: ${origin}` });
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Max-Age', '600');
+    }
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  };
 }
 
-app.use('/api', (req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && isAllowedOrigin(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Max-Age', '600');
-  } else if (origin) {
-    return res.status(403).json({ error: 'Origem não autorizada.' });
-  }
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
+// API da extensão: somente chrome-extension://<id>
+app.use(
+  '/api',
+  cors((origin) => {
+    if (!origin.startsWith('chrome-extension://')) return false;
+    if (allowedExtensionIds.length === 0) return true; // desenvolvimento
+    return allowedExtensionIds.includes(origin.slice('chrome-extension://'.length));
+  })
+);
+
+// API do painel: origens do GitHub Pages (ADMIN_ORIGINS) + localhost.
+// A autenticação é por token Bearer (sem cookies), então não há risco de CSRF.
+app.use(
+  '/admin/api',
+  cors((origin) => {
+    if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+    if (adminOrigins.length === 0) return true; // sem restrição configurada
+    return adminOrigins.includes(origin);
+  })
+);
 
 /* ------------------------------------------------------------------ */
 /* API pública (usada pela extensão)                                    */
 /* ------------------------------------------------------------------ */
-const apiLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false });
-const verifyLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false });
+const limiter = (windowMs, limit) => rateLimit({ windowMs, limit, standardHeaders: 'draft-7', legacyHeaders: false });
+const apiLimiter = limiter(60_000, 30);
+const verifyLimiter = limiter(15 * 60_000, 20);
+const loginLimiter = limiter(15 * 60_000, 10);
 
 function readBearer(req) {
   const h = req.headers.authorization || '';
@@ -128,16 +155,9 @@ app.post('/api/analyze', apiLimiter, requireAccessCode, async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Painel administrativo                                                */
+/* API do painel administrativo                                         */
 /* ------------------------------------------------------------------ */
-const ADMIN_COOKIE = 'resolvy_admin';
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-const sessions = new Map(); // token -> expiresAt
-
-function getCookie(req, name) {
-  const match = (req.headers.cookie || '').split(';').map((c) => c.trim()).find((c) => c.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
-}
 
 function safeEqual(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest();
@@ -146,37 +166,19 @@ function safeEqual(a, b) {
 }
 
 function requireAdmin(req, res, next) {
-  const token = getCookie(req, ADMIN_COOKIE);
-  const exp = token && sessions.get(token);
-  if (!exp || exp < Date.now()) {
-    if (token) sessions.delete(token);
-    return res.status(401).json({ error: 'Não autenticado.' });
-  }
+  if (!isValidAdminSession(readBearer(req))) return res.status(401).json({ error: 'Sessão expirada. Entre novamente.' });
   next();
 }
 
-const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false });
-
 app.post('/admin/api/login', loginLimiter, (req, res) => {
-  if (!ADMIN_PASSWORD || !safeEqual(req.body?.password ?? '', ADMIN_PASSWORD)) {
+  if (!safeEqual(req.body?.password ?? '', ADMIN_PASSWORD)) {
     return res.status(401).json({ error: 'Senha incorreta.' });
   }
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, Date.now() + SESSION_TTL_MS);
-  res.cookie(ADMIN_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'strict',
-    secure: req.secure,
-    maxAge: SESSION_TTL_MS,
-    path: '/admin',
-  });
-  res.json({ ok: true });
+  res.json({ token: createAdminSession(SESSION_TTL_MS), expires_in: SESSION_TTL_MS / 1000 });
 });
 
 app.post('/admin/api/logout', (req, res) => {
-  const token = getCookie(req, ADMIN_COOKIE);
-  if (token) sessions.delete(token);
-  res.clearCookie(ADMIN_COOKIE, { path: '/admin' });
+  deleteAdminSession(readBearer(req));
   res.json({ ok: true });
 });
 
@@ -223,9 +225,24 @@ app.delete('/admin/api/codes/:id', requireAdmin, (req, res) => {
   ok ? res.json({ ok: true }) : res.status(404).json({ error: 'Código não encontrado.' });
 });
 
-app.use('/admin', express.static(join(__dirname, '..', 'public', 'admin')));
-app.get('/', (_req, res) => res.redirect('/admin/'));
+/* ------------------------------------------------------------------ */
+/* Painel: em produção fica no GitHub Pages. Localmente, servimos ../docs */
+/* ------------------------------------------------------------------ */
+const docsDir = join(__dirname, '..', '..', 'docs');
+if (existsSync(docsDir)) {
+  app.use(
+    '/admin',
+    helmet.contentSecurityPolicy({ directives: { 'connect-src': ["'self'", 'https:', 'http://localhost:*'] } }),
+    express.static(docsDir)
+  );
+  app.get('/', (_req, res) => res.redirect('/admin/'));
+} else {
+  app.get('/', (_req, res) => res.json({ name: 'Resolvy API', ok: true }));
+}
 
 app.listen(PORT, () => {
-  console.log(`Resolvy rodando em http://localhost:${PORT}  (painel: /admin)`);
+  console.log(`Resolvy rodando na porta ${PORT}`);
+  console.log(`Banco de dados: ${dbPath}`);
+  console.log(`Origens do painel: ${adminOrigins.length ? adminOrigins.join(', ') : 'qualquer (defina ADMIN_ORIGINS)'}`);
+  console.log(`Extensões: ${allowedExtensionIds.length ? allowedExtensionIds.join(', ') : 'qualquer (defina ALLOWED_EXTENSION_IDS)'}`);
 });

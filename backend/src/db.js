@@ -1,10 +1,16 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import crypto from 'node:crypto';
 
-const dbPath = resolve(process.env.DATABASE_PATH || './data/resolvy.db');
+// No Railway, se houver um Volume anexado, o banco vai para ele automaticamente.
+const volume = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+export const dbPath = resolve(process.env.DATABASE_PATH || (volume ? join(volume, 'resolvy.db') : './data/resolvy.db'));
 mkdirSync(dirname(dbPath), { recursive: true });
+
+if (process.env.RAILWAY_ENVIRONMENT && !volume && !process.env.DATABASE_PATH) {
+  console.warn('⚠️  Nenhum Volume do Railway anexado: códigos e chaves serão PERDIDOS a cada deploy.');
+}
 
 export const db = new DatabaseSync(dbPath);
 
@@ -27,7 +33,35 @@ db.exec(`
     last_used_at TEXT,
     usage_count  INTEGER NOT NULL DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS admin_sessions (
+    token_hash TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL
+  );
 `);
+
+/* ------------------------------------------------------------------ */
+/* Sessões do painel (token Bearer; só o hash fica no banco)            */
+/* ------------------------------------------------------------------ */
+
+const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+export function createAdminSession(ttlMs) {
+  const token = crypto.randomBytes(32).toString('hex');
+  db.prepare('DELETE FROM admin_sessions WHERE expires_at < ?').run(Date.now());
+  db.prepare('INSERT INTO admin_sessions (token_hash, expires_at) VALUES (?, ?)').run(sha256(token), Date.now() + ttlMs);
+  return token;
+}
+
+export function isValidAdminSession(token) {
+  if (!token || token.length > 128) return false;
+  const row = db.prepare('SELECT expires_at FROM admin_sessions WHERE token_hash = ?').get(sha256(token));
+  return Boolean(row && row.expires_at > Date.now());
+}
+
+export function deleteAdminSession(token) {
+  if (token) db.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').run(sha256(token));
+}
 
 /* ------------------------------------------------------------------ */
 /* Criptografia das chaves de API (AES-256-GCM)                         */

@@ -1,27 +1,73 @@
 const $ = (sel) => document.querySelector(sel);
 
+/* ---------------- Servidor e sessão ---------------- */
+// Prioridade: config.js > endereço salvo > mesmo domínio (quando o backend serve o painel localmente).
+const CONFIG_URL = (window.RESOLVY_CONFIG?.apiUrl || '').trim();
+const store = {
+  get(k, s = localStorage) { try { return s.getItem(k); } catch { return null; } },
+  set(k, v, s = localStorage) { try { v == null ? s.removeItem(k) : s.setItem(k, v); } catch {} },
+};
+
+function normalizeUrl(raw) {
+  const url = new URL(raw.trim());
+  if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) {
+    throw new Error('Use o endereço HTTPS do Railway.');
+  }
+  return url.origin;
+}
+
+function defaultServer() {
+  if (CONFIG_URL) return CONFIG_URL.replace(/\/$/, '');
+  const saved = store.get('resolvy_api');
+  if (saved) return saved;
+  // Servido pelo próprio backend (desenvolvimento local)
+  return location.pathname.startsWith('/admin') ? location.origin : '';
+}
+
+let apiBase = defaultServer();
+let token = store.get('resolvy_token', sessionStorage);
+
 async function api(path, options = {}) {
-  const res = await fetch(`/admin/api${path}`, {
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  if (!apiBase) throw new Error('Informe o endereço do servidor.');
+  let res;
+  try {
+    res = await fetch(`${apiBase}/admin/api${path}`, {
+      method: options.method || 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+  } catch {
+    throw new Error('Não foi possível conectar ao servidor. Confira o endereço e se o deploy no Railway está ativo.');
+  }
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && path !== '/login') showLogin();
+  if (res.status === 401 && path !== '/login') {
+    setToken(null);
+    showLogin();
+  }
   if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
   return data;
+}
+
+function setToken(t) {
+  token = t;
+  store.set('resolvy_token', t, sessionStorage);
 }
 
 function showLogin() {
   $('#app-view').hidden = true;
   $('#login-view').hidden = false;
-  $('#login-password').focus();
+  $('#server-field').hidden = Boolean(CONFIG_URL);
+  $('#login-server').value = apiBase;
+  ($('#server-field').hidden || apiBase ? $('#login-password') : $('#login-server')).focus();
 }
 
 async function showApp() {
   $('#login-view').hidden = true;
   $('#app-view').hidden = false;
+  $('#server-label').textContent = apiBase.replace(/^https?:\/\//, '');
   await Promise.all([loadSettings(), loadCodes()]);
 }
 
@@ -32,7 +78,12 @@ $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('#login-error').textContent = '';
   try {
-    await api('/login', { method: 'POST', body: { password: $('#login-password').value } });
+    if (!CONFIG_URL) {
+      apiBase = normalizeUrl($('#login-server').value);
+      store.set('resolvy_api', apiBase);
+    }
+    const { token: t } = await api('/login', { method: 'POST', body: { password: $('#login-password').value } });
+    setToken(t);
     $('#login-password').value = '';
     await showApp();
   } catch (err) {
@@ -42,6 +93,7 @@ $('#login-form').addEventListener('submit', async (e) => {
 
 $('#logout').addEventListener('click', async () => {
   await api('/logout', { method: 'POST' }).catch(() => {});
+  setToken(null);
   showLogin();
 });
 
@@ -164,4 +216,5 @@ $('#copy-code').addEventListener('click', async () => {
 });
 
 /* ---------------- Início ---------------- */
-api('/me').then(showApp).catch(showLogin);
+if (token && apiBase) api('/me').then(showApp).catch(showLogin);
+else showLogin();

@@ -1,5 +1,5 @@
 const $ = (sel) => document.querySelector(sel);
-const DEFAULT_SERVER = 'http://localhost:3000';
+const DEFAULT_SERVER = RESOLVY_DEFAULT_SERVER; // definido em ../config.js
 
 function show(view) {
   $('#login-view').hidden = view !== 'login';
