@@ -81,8 +81,10 @@ O `railway.json` já configura o build (Railpack), o comando `npm start`, o heal
    ```
    (Se deixar vazio, o painel pede o endereço na tela de login.)
 2. Faça commit e push.
-3. No GitHub: **Settings → Pages → Build and deployment → Source: Deploy from a branch →** escolha o branch e a pasta **`/docs`** → *Save*.
+3. No GitHub: **Settings → Pages → Build and deployment → Source: Deploy from a branch →** escolha o branch e a pasta **`/docs`** (ou `/ (root)`) → *Save*.
 4. Em ~1 minuto o painel estará em `https://delta-1.github.io/RESOLVY/`.
+   - Com `/docs`, o painel abre direto nesse endereço.
+   - Com `/ (root)`, o `index.html` da raiz redireciona para `https://delta-1.github.io/RESOLVY/docs/`.
 5. Entre com a `ADMIN_PASSWORD`, escolha o provedor (Gemini/OpenAI), cole a chave da API e gere os códigos de acesso.
 
 > O painel usa um token de sessão (válido por 8 h, guardado só na aba) em vez de cookies, porque o GitHub Pages e o Railway são domínios diferentes. O painel é público, mas não contém nenhum segredo: tudo exige a senha.
