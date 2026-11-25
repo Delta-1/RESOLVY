@@ -2,5 +2,5 @@
 // Ex.: 'https://resolvy-production.up.railway.app'
 // Se ficar vazio, o painel pede o endereço na tela de login.
 window.RESOLVY_CONFIG = {
-  apiUrl: '',
+  apiUrl: 'https://resolvy-api-production.up.railway.app',
 };
