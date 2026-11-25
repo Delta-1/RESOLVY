@@ -69,18 +69,21 @@
       </section>
 
       <section class="card">
-        <h2>Códigos de acesso</h2>
-        <form id="code-form" class="row wrap">
-          <input id="code-label" placeholder="Identificação (ex.: Maria – Financeiro)" maxlength="100" />
-          <input id="code-days" type="number" min="1" max="3650" placeholder="Validade (dias, opcional)" />
-          <button type="submit">Gerar código</button>
+        <h2>Usuários da extensão</h2>
+        <p class="muted">Cada pessoa entra na extensão com um <strong>login</strong> e uma <strong>key</strong>.</p>
+        <form id="user-form" class="row wrap">
+          <input id="user-login" placeholder="Login (ex.: maria)" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" required />
+          <input id="user-key" placeholder="Key (vazio = gerar automática)" maxlength="64" autocomplete="off" spellcheck="false" />
+          <input id="user-days" type="number" min="1" max="3650" placeholder="Validade em dias (opcional)" />
+          <button type="submit">Criar usuário</button>
         </form>
+        <p id="user-error" class="error" role="alert"></p>
 
-        <div id="new-code" class="new-code" hidden>
-          <p>Novo código gerado. <strong>Copie agora</strong> — ele não será exibido novamente.</p>
-          <div class="row">
-            <code id="new-code-value"></code>
-            <button type="button" id="copy-code" class="ghost small">Copiar</button>
+        <div id="new-user" class="new-code" hidden>
+          <p>Usuário pronto. Envie estes dados para a pessoa:</p>
+          <div class="row wrap">
+            <code id="new-user-value"></code>
+            <button type="button" id="copy-user" class="ghost small">Copiar</button>
           </div>
         </div>
 
@@ -88,11 +91,11 @@
           <table>
             <thead>
               <tr>
-                <th>Código</th><th>Identificação</th><th>Status</th>
+                <th>Login</th><th>Key</th><th>Status</th>
                 <th>Expira</th><th>Usos</th><th>Último uso</th><th></th>
               </tr>
             </thead>
-            <tbody id="codes-body"></tbody>
+            <tbody id="users-body"></tbody>
           </table>
         </div>
       </section>

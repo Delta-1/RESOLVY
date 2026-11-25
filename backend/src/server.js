@@ -11,11 +11,19 @@ import {
   dbPath,
   getPublicSettings,
   setSetting,
-  createAccessCode,
-  listAccessCodes,
-  setAccessCodeActive,
-  deleteAccessCode,
-  validateAccessCode,
+  LOGIN_RE,
+  KEY_MIN,
+  KEY_MAX,
+  normalizeLogin,
+  createUser,
+  loginExists,
+  listUsers,
+  getUserKey,
+  setUserKey,
+  setUserActive,
+  deleteUser,
+  validateCredentials,
+  generateKey,
   createAdminSession,
   isValidAdminSession,
   deleteAdminSession,
@@ -102,22 +110,34 @@ function readBearer(req) {
   return h.startsWith('Bearer ') ? h.slice(7).trim() : null;
 }
 
-function requireAccessCode(req, res, next) {
-  const record = validateAccessCode(readBearer(req), { countUsage: true });
-  if (!record) return res.status(401).json({ error: 'Código de acesso inválido, expirado ou revogado.' });
-  req.accessCode = record;
+/** Lê "Authorization: Basic base64(login:key)". */
+function readBasic(req) {
+  const h = req.headers.authorization || '';
+  if (!h.startsWith('Basic ')) return null;
+  const decoded = Buffer.from(h.slice(6), 'base64').toString('utf8');
+  const sep = decoded.indexOf(':');
+  return sep > 0 ? { login: decoded.slice(0, sep), key: decoded.slice(sep + 1) } : null;
+}
+
+const INVALID_LOGIN = 'Login ou key inválidos, expirados ou desativados.';
+
+function requireUser(req, res, next) {
+  const cred = readBasic(req);
+  const user = cred && validateCredentials(cred.login, cred.key, { countUsage: true });
+  if (!user) return res.status(401).json({ error: INVALID_LOGIN });
+  req.user = user;
   next();
 }
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.post('/api/auth/verify', verifyLimiter, (req, res) => {
-  const record = validateAccessCode(req.body?.code);
-  if (!record) return res.status(401).json({ valid: false, error: 'Código inválido, expirado ou revogado.' });
-  res.json({ valid: true, label: record.label, expires_at: record.expires_at });
+  const user = validateCredentials(req.body?.login, req.body?.key);
+  if (!user) return res.status(401).json({ valid: false, error: INVALID_LOGIN });
+  res.json({ valid: true, login: user.login, expires_at: user.expires_at });
 });
 
-app.post('/api/analyze', apiLimiter, requireAccessCode, async (req, res) => {
+app.post('/api/analyze', apiLimiter, requireUser, async (req, res) => {
   const { text, url, title, mode = 'resumo', question = '', elements = [] } = req.body || {};
 
   if (typeof text !== 'string' || text.trim().length < 20) {
@@ -205,24 +225,58 @@ app.put('/admin/api/settings', requireAdmin, (req, res) => {
   res.json(getPublicSettings());
 });
 
-app.get('/admin/api/codes', requireAdmin, (_req, res) => res.json(listAccessCodes()));
+function checkKey(key) {
+  if (/\s/.test(key) || key.includes(':')) return 'A key não pode ter espaços nem ":".';
+  if (key.length < KEY_MIN || key.length > KEY_MAX) return `A key deve ter de ${KEY_MIN} a ${KEY_MAX} caracteres.`;
+  return null;
+}
 
-app.post('/admin/api/codes', requireAdmin, (req, res) => {
+app.get('/admin/api/users', requireAdmin, (_req, res) => res.json(listUsers()));
+
+app.post('/admin/api/users', requireAdmin, (req, res) => {
+  const login = normalizeLogin(req.body?.login);
+  const key = String(req.body?.key ?? '').trim();
   const days = req.body?.expiresInDays ? Number(req.body.expiresInDays) : null;
+
+  if (!LOGIN_RE.test(login)) {
+    return res.status(400).json({ error: 'Login: 3 a 32 caracteres, só letras, números, ponto, hífen ou _ (sem espaços).' });
+  }
+  if (loginExists(login)) return res.status(409).json({ error: `O login "${login}" já existe.` });
+  if (key) {
+    const err = checkKey(key);
+    if (err) return res.status(400).json({ error: err });
+  }
   if (days !== null && (!Number.isFinite(days) || days <= 0 || days > 3650)) {
     return res.status(400).json({ error: 'Validade inválida (1 a 3650 dias).' });
   }
-  res.status(201).json(createAccessCode({ label: req.body?.label || '', expiresInDays: days }));
+  res.status(201).json(createUser({ login, key, expiresInDays: days }));
 });
 
-app.patch('/admin/api/codes/:id', requireAdmin, (req, res) => {
-  const ok = setAccessCodeActive(Number(req.params.id), Boolean(req.body?.active));
-  ok ? res.json({ ok: true }) : res.status(404).json({ error: 'Código não encontrado.' });
+app.get('/admin/api/users/:id/key', requireAdmin, (req, res) => {
+  const key = getUserKey(Number(req.params.id));
+  key ? res.json({ key }) : res.status(404).json({ error: 'Usuário não encontrado.' });
 });
 
-app.delete('/admin/api/codes/:id', requireAdmin, (req, res) => {
-  const ok = deleteAccessCode(Number(req.params.id));
-  ok ? res.json({ ok: true }) : res.status(404).json({ error: 'Código não encontrado.' });
+app.patch('/admin/api/users/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const body = req.body || {};
+  if (body.active !== undefined && !setUserActive(id, Boolean(body.active))) {
+    return res.status(404).json({ error: 'Usuário não encontrado.' });
+  }
+  if (body.key !== undefined) {
+    // key vazia = gerar uma nova automaticamente
+    const key = String(body.key).trim() || generateKey();
+    const err = checkKey(key);
+    if (err) return res.status(400).json({ error: err });
+    if (!setUserKey(id, key)) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    return res.json({ ok: true, key });
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/admin/api/users/:id', requireAdmin, (req, res) => {
+  const ok = deleteUser(Number(req.params.id));
+  ok ? res.json({ ok: true }) : res.status(404).json({ error: 'Usuário não encontrado.' });
 });
 
 /* ------------------------------------------------------------------ */

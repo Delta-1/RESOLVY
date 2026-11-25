@@ -5,8 +5,8 @@ importScripts('config.js');
 const DEFAULT_SERVER = RESOLVY_DEFAULT_SERVER;
 
 async function getConfig() {
-  const { serverUrl = DEFAULT_SERVER, accessCode = '' } = await chrome.storage.local.get(['serverUrl', 'accessCode']);
-  return { serverUrl, accessCode };
+  const { serverUrl = DEFAULT_SERVER, login = '', key = '' } = await chrome.storage.local.get(['serverUrl', 'login', 'key']);
+  return { serverUrl, login, key };
 }
 
 /** Exige HTTPS, exceto para localhost (desenvolvimento). */
@@ -24,14 +24,19 @@ function normalizeServerUrl(raw) {
   return url.origin;
 }
 
-async function apiFetch(serverUrl, path, { code, body } = {}) {
+/** Base64 que aceita acentos (UTF-8). */
+function toBase64(text) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+}
+
+async function apiFetch(serverUrl, path, { auth, body } = {}) {
   let res;
   try {
     res = await fetch(`${serverUrl}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(code ? { Authorization: `Bearer ${code}` } : {}),
+        ...(auth ? { Authorization: `Basic ${toBase64(`${auth.login}:${auth.key}`)}` } : {}),
       },
       body: JSON.stringify(body ?? {}),
     });
@@ -49,8 +54,8 @@ async function apiFetch(serverUrl, path, { code, body } = {}) {
 
 /** Injeta o content script (se ainda não estiver na aba) e dispara a análise. */
 async function runInTab(tabId, mode = 'resumo', question = '') {
-  const { accessCode } = await getConfig();
-  if (!accessCode) throw new Error('Faça login no popup da extensão com seu código de acesso.');
+  const { login, key } = await getConfig();
+  if (!login || !key) throw new Error('Faça login no popup da extensão (login e key).');
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
   } catch {
@@ -60,17 +65,18 @@ async function runInTab(tabId, mode = 'resumo', question = '') {
 }
 
 const handlers = {
-  // Popup: valida e salva o código de acesso
-  async verify({ serverUrl, code }) {
+  // Popup: valida e salva login + key
+  async verify({ serverUrl, login, key }) {
     const origin = normalizeServerUrl(serverUrl);
-    const cleanCode = String(code || '').trim().toUpperCase();
-    const data = await apiFetch(origin, '/api/auth/verify', { body: { code: cleanCode } });
-    await chrome.storage.local.set({ serverUrl: origin, accessCode: cleanCode, label: data.label || '' });
-    return { ok: true, label: data.label, expires_at: data.expires_at };
+    const cleanLogin = String(login || '').trim().toLowerCase();
+    const cleanKey = String(key || '').trim();
+    const data = await apiFetch(origin, '/api/auth/verify', { body: { login: cleanLogin, key: cleanKey } });
+    await chrome.storage.local.set({ serverUrl: origin, login: data.login, key: cleanKey });
+    return { ok: true, login: data.login, expires_at: data.expires_at };
   },
 
   async logout() {
-    await chrome.storage.local.remove(['accessCode', 'label']);
+    await chrome.storage.local.remove(['key']); // mantém o login preenchido
     return { ok: true };
   },
 
@@ -82,13 +88,13 @@ const handlers = {
 
   // Content script: envia o texto extraído e recebe a resposta da IA
   async 'resolvy:analyze'({ payload }) {
-    const { serverUrl, accessCode } = await getConfig();
-    if (!accessCode) throw new Error('Sessão expirada. Faça login novamente no popup.');
+    const { serverUrl, login, key } = await getConfig();
+    if (!login || !key) throw new Error('Sessão expirada. Faça login novamente no popup.');
     try {
-      const data = await apiFetch(serverUrl, '/api/analyze', { code: accessCode, body: payload });
+      const data = await apiFetch(serverUrl, '/api/analyze', { auth: { login, key }, body: payload });
       return { ok: true, data };
     } catch (err) {
-      if (err.status === 401) await chrome.storage.local.remove(['accessCode', 'label']);
+      if (err.status === 401) await chrome.storage.local.remove(['key']);
       throw err;
     }
   },

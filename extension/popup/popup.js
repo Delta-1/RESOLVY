@@ -7,14 +7,15 @@ function show(view) {
 }
 
 async function init() {
-  const { serverUrl, accessCode, label } = await chrome.storage.local.get(['serverUrl', 'accessCode', 'label']);
+  const { serverUrl, login, key } = await chrome.storage.local.get(['serverUrl', 'login', 'key']);
   $('#server').value = serverUrl || DEFAULT_SERVER;
-  if (accessCode) {
-    $('#who-label').textContent = label ? `como ${label}` : '';
+  if (login && key) {
+    $('#who-label').textContent = `como ${login}`;
     show('main');
   } else {
     show('login');
-    $('#code').focus();
+    if (login) $('#login').value = login;
+    $(login ? '#key' : '#login').focus();
   }
 }
 
@@ -26,15 +27,16 @@ $('#login-view').addEventListener('submit', async (e) => {
   const res = await chrome.runtime.sendMessage({
     type: 'verify',
     serverUrl: $('#server').value || DEFAULT_SERVER,
-    code: $('#code').value,
+    login: $('#login').value,
+    key: $('#key').value,
   });
   $('#login-btn').disabled = false;
   if (!res?.ok) {
     $('#login-msg').textContent = res?.error || 'Falha ao entrar.';
     return;
   }
-  $('#code').value = '';
-  $('#who-label').textContent = res.label ? `como ${res.label}` : '';
+  $('#key').value = '';
+  $('#who-label').textContent = `como ${res.login}`;
   show('main');
 });
 

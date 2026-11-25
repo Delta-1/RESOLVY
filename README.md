@@ -85,7 +85,7 @@ O `railway.json` já configura o build (Railpack), o comando `npm start`, o heal
 4. Em ~1 minuto o painel estará em `https://delta-1.github.io/RESOLVY/`.
    - Com `/docs`, o painel abre direto nesse endereço.
    - Com `/ (root)`, o `index.html` da raiz redireciona para `https://delta-1.github.io/RESOLVY/docs/`.
-5. Entre com a `ADMIN_PASSWORD`, escolha o provedor (Gemini/OpenAI), cole a chave da API e gere os códigos de acesso.
+5. Entre com a `ADMIN_PASSWORD`, escolha o provedor (Gemini/OpenAI), cole a chave da API e crie os usuários (login + key).
 
 > O painel usa um token de sessão (válido por 8 h, guardado só na aba) em vez de cookies, porque o GitHub Pages e o Railway são domínios diferentes. O painel é público, mas não contém nenhum segredo: tudo exige a senha.
 
@@ -96,7 +96,7 @@ O `railway.json` já configura o build (Railpack), o comando `npm start`, o heal
    const RESOLVY_DEFAULT_SERVER = 'https://resolvy-production.up.railway.app';
    ```
 2. `chrome://extensions` → ative **Modo do desenvolvedor** → **Carregar sem compactação** → pasta `extension/`.
-3. Clique no ícone do Resolvy, cole um código de acesso e **Entrar**.
+3. Clique no ícone do Resolvy, digite o **login** e a **key** criados no painel e clique em **Entrar**.
 
 Para distribuir a outras pessoas: compacte a pasta `extension/` em `.zip` (ou publique na Chrome Web Store, o que mantém o mesmo ID para todos).
 
@@ -125,12 +125,13 @@ Com `docs/config.js` vazio, o painel local usa o próprio servidor. A extensão 
 | Método | Rota | Auth | Descrição |
 |---|---|---|---|
 | GET | `/health` | — | Healthcheck |
-| POST | `/api/auth/verify` | — | `{code}` → `{valid, label, expires_at}` |
-| POST | `/api/analyze` | `Bearer <código de acesso>` | `{text, mode, question?, url, title, elements[]}` → `{answer, actions[]}` |
+| POST | `/api/auth/verify` | — | `{login, key}` → `{valid, login, expires_at}` |
+| POST | `/api/analyze` | `Basic base64(login:key)` | `{text, mode, question?, url, title, elements[]}` → `{answer, actions[]}` |
 | POST | `/admin/api/login` | — | `{password}` → `{token}` |
 | GET/PUT | `/admin/api/settings` | `Bearer <token>` | Provedor, modelos e chaves (mascaradas) |
-| GET/POST | `/admin/api/codes` | `Bearer <token>` | Listar / criar códigos |
-| PATCH/DELETE | `/admin/api/codes/:id` | `Bearer <token>` | Revogar/reativar / excluir |
+| GET/POST | `/admin/api/users` | `Bearer <token>` | Listar / criar usuários (`{login, key?, expiresInDays?}`) |
+| GET | `/admin/api/users/:id/key` | `Bearer <token>` | Ver a key de um usuário |
+| PATCH/DELETE | `/admin/api/users/:id` | `Bearer <token>` | Ativar/desativar, trocar key (`{key}`; vazio = gerar) / excluir |
 
 Modos de `/api/analyze`: `resumo`, `acessibilidade`, `pergunta`.
 
@@ -148,5 +149,5 @@ Modos de `/api/analyze`: `resumo`, `acessibilidade`, `pergunta`.
 - CORS: painel só a partir de `ADMIN_ORIGINS`; API só a partir de `chrome-extension://` (e dos IDs em `ALLOWED_EXTENSION_IDS`).
 - Rate limit no login, na verificação de códigos e na análise (com o IP real atrás do proxy do Railway).
 - Chaves de API criptografadas com AES-256-GCM; o painel só mostra os 4 últimos caracteres.
-- Códigos de acesso armazenados como hash SHA-256, com validade e revogação.
+- Usuários da extensão com login + key (key de 4 a 64 caracteres, escolhida ou gerada com 6 caracteres). A key fica criptografada com a `ENCRYPTION_KEY` para que o administrador possa consultá-la no painel; validade e desativação opcionais.
 - Valores digitados em formulários nunca são enviados; o texto da página é tratado como dado no prompt.

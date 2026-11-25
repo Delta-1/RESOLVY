@@ -22,18 +22,6 @@ db.exec(`
     value TEXT NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS access_codes (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    code_hash    TEXT NOT NULL UNIQUE,
-    code_hint    TEXT NOT NULL,
-    label        TEXT NOT NULL DEFAULT '',
-    active       INTEGER NOT NULL DEFAULT 1,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    expires_at   TEXT,
-    last_used_at TEXT,
-    usage_count  INTEGER NOT NULL DEFAULT 0
-  );
-
   CREATE TABLE IF NOT EXISTS admin_sessions (
     token_hash TEXT PRIMARY KEY,
     expires_at INTEGER NOT NULL
@@ -144,60 +132,93 @@ export function getPublicSettings() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Códigos de acesso                                                    */
+/* Usuários da extensão (login + key)                                    */
 /* ------------------------------------------------------------------ */
+// A key fica criptografada (AES-256-GCM via ENCRYPTION_KEY), não só em hash,
+// para que o administrador possa consultá-la no painel.
 
-const hashCode = (code) => crypto.createHash('sha256').update(code.trim().toUpperCase()).digest('hex');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    login        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    key_enc      TEXT NOT NULL,
+    active       INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at   TEXT,
+    last_used_at TEXT,
+    usage_count  INTEGER NOT NULL DEFAULT 0
+  );
+`);
 
-/** Gera um código legível no formato RSV-XXXX-XXXX-XXXX (sem caracteres ambíguos). */
-function generateCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = crypto.randomBytes(12);
-  const chars = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
-  return `RSV-${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8, 12)}`;
+export const LOGIN_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+export const KEY_MIN = 4;
+export const KEY_MAX = 64;
+
+export function normalizeLogin(login) {
+  return String(login ?? '').trim().toLowerCase();
 }
 
-export function createAccessCode({ label = '', expiresInDays = null } = {}) {
-  const code = generateCode();
-  const expiresAt = expiresInDays
-    ? new Date(Date.now() + Number(expiresInDays) * 86_400_000).toISOString()
-    : null;
+/** Key curta e fácil de digitar: 6 caracteres sem ambíguos (0/O, 1/I/L). */
+export function generateKey() {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  return Array.from(crypto.randomBytes(6), (b) => alphabet[b % alphabet.length]).join('');
+}
+
+const expiryFromDays = (days) => (days ? new Date(Date.now() + Number(days) * 86_400_000).toISOString() : null);
+
+export function createUser({ login, key, expiresInDays = null }) {
+  const finalKey = key || generateKey();
   const info = db
-    .prepare('INSERT INTO access_codes (code_hash, code_hint, label, expires_at) VALUES (?, ?, ?, ?)')
-    .run(hashCode(code), code.slice(-4), String(label).slice(0, 100), expiresAt);
-  // O código em texto puro só é devolvido aqui, uma única vez.
-  return { id: Number(info.lastInsertRowid), code, label, expires_at: expiresAt };
+    .prepare('INSERT INTO users (login, key_enc, expires_at) VALUES (?, ?, ?)')
+    .run(normalizeLogin(login), encrypt(finalKey), expiryFromDays(expiresInDays));
+  return { id: Number(info.lastInsertRowid), login: normalizeLogin(login), key: finalKey };
 }
 
-export function listAccessCodes() {
+export function loginExists(login) {
+  return Boolean(db.prepare('SELECT 1 FROM users WHERE login = ?').get(normalizeLogin(login)));
+}
+
+export function listUsers() {
   return db
     .prepare(
-      `SELECT id, code_hint, label, active, created_at, expires_at, last_used_at, usage_count
-       FROM access_codes ORDER BY id DESC`
+      `SELECT id, login, active, created_at, expires_at, last_used_at, usage_count
+       FROM users ORDER BY login`
     )
     .all();
 }
 
-export function setAccessCodeActive(id, active) {
-  return db.prepare('UPDATE access_codes SET active = ? WHERE id = ?').run(active ? 1 : 0, id).changes > 0;
+export function getUserKey(id) {
+  const row = db.prepare('SELECT key_enc FROM users WHERE id = ?').get(id);
+  return row ? decrypt(row.key_enc) : null;
 }
 
-export function deleteAccessCode(id) {
-  return db.prepare('DELETE FROM access_codes WHERE id = ?').run(id).changes > 0;
+export function setUserKey(id, key) {
+  return db.prepare('UPDATE users SET key_enc = ? WHERE id = ?').run(encrypt(key), id).changes > 0;
 }
 
-/** Valida um código. Retorna o registro se válido, ou null. */
-export function validateAccessCode(code, { countUsage = false } = {}) {
-  if (!code || typeof code !== 'string' || code.length > 64) return null;
+export function setUserActive(id, active) {
+  return db.prepare('UPDATE users SET active = ? WHERE id = ?').run(active ? 1 : 0, id).changes > 0;
+}
+
+export function deleteUser(id) {
+  return db.prepare('DELETE FROM users WHERE id = ?').run(id).changes > 0;
+}
+
+/** Valida login + key. Retorna o usuário se válido, ou null. */
+export function validateCredentials(login, key, { countUsage = false } = {}) {
+  if (typeof login !== 'string' || typeof key !== 'string') return null;
+  if (login.length > 64 || key.length > KEY_MAX) return null;
   const row = db
-    .prepare('SELECT id, label, active, expires_at FROM access_codes WHERE code_hash = ?')
-    .get(hashCode(code));
-  if (!row || !row.active) return null;
+    .prepare('SELECT id, login, key_enc, active, expires_at FROM users WHERE login = ?')
+    .get(normalizeLogin(login));
+  // Compara mesmo quando o login não existe, para não revelar quais logins existem pelo tempo de resposta.
+  const stored = row ? decrypt(row.key_enc) : generateKey();
+  const a = crypto.createHash('sha256').update(stored).digest();
+  const b = crypto.createHash('sha256').update(key.trim()).digest();
+  if (!row || !crypto.timingSafeEqual(a, b) || !row.active) return null;
   if (row.expires_at && new Date(row.expires_at) < new Date()) return null;
   if (countUsage) {
-    db.prepare(
-      "UPDATE access_codes SET usage_count = usage_count + 1, last_used_at = datetime('now') WHERE id = ?"
-    ).run(row.id);
+    db.prepare("UPDATE users SET usage_count = usage_count + 1, last_used_at = datetime('now') WHERE id = ?").run(row.id);
   }
-  return row;
+  return { id: row.id, login: row.login, expires_at: row.expires_at };
 }

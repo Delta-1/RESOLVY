@@ -68,7 +68,7 @@ async function showApp() {
   $('#login-view').hidden = true;
   $('#app-view').hidden = false;
   $('#server-label').textContent = apiBase.replace(/^https?:\/\//, '');
-  await Promise.all([loadSettings(), loadCodes()]);
+  await Promise.all([loadSettings(), loadUsers()]);
 }
 
 const fmtDate = (iso) => (iso ? new Date(iso.includes('T') ? iso : `${iso}Z`).toLocaleString('pt-BR') : '—');
@@ -146,74 +146,124 @@ function flash(sel, msg) {
   setTimeout(() => ($(sel).textContent = ''), 4000);
 }
 
-/* ---------------- Códigos de acesso ---------------- */
-async function loadCodes() {
-  const codes = await api('/codes');
-  const body = $('#codes-body');
+/* ---------------- Usuários (login + key) ---------------- */
+async function copyText(btn, text) {
+  try { await navigator.clipboard.writeText(text); } catch { prompt('Copie:', text); return; }
+  const old = btn.textContent;
+  btn.textContent = 'Copiado!';
+  setTimeout(() => (btn.textContent = old), 1500);
+}
+
+function smallButton(text, cls, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `${cls} small`;
+  b.textContent = text;
+  b.onclick = onClick;
+  return b;
+}
+
+function showNewUser(login, key) {
+  $('#new-user-value').textContent = `Login: ${login}   Key: ${key}`;
+  $('#new-user').hidden = false;
+}
+
+async function loadUsers() {
+  const users = await api('/users');
+  const body = $('#users-body');
   body.replaceChildren();
-  if (!codes.length) {
-    const tr = body.insertRow();
-    const td = tr.insertCell();
+  if (!users.length) {
+    const td = body.insertRow().insertCell();
     td.colSpan = 7;
     td.className = 'muted';
-    td.textContent = 'Nenhum código criado ainda.';
+    td.textContent = 'Nenhum usuário criado ainda.';
     return;
   }
-  for (const c of codes) {
-    const expired = c.expires_at && new Date(c.expires_at) < new Date();
+  for (const u of users) {
+    const expired = u.expires_at && new Date(u.expires_at) < new Date();
     const tr = body.insertRow();
-    tr.insertCell().textContent = `RSV-…-${c.code_hint}`;
-    tr.insertCell().textContent = c.label || '—';
+
+    const loginCell = tr.insertCell();
+    const strong = document.createElement('strong');
+    strong.textContent = u.login;
+    loginCell.append(strong);
+
+    // Key: oculta, com "Ver" e "Copiar"
+    const keyCell = tr.insertCell();
+    const keyWrap = document.createElement('div');
+    keyWrap.className = 'row';
+    const keyText = document.createElement('code');
+    keyText.className = 'key';
+    keyText.textContent = '••••••';
+    let revealed = null;
+    const fetchKey = async () => (revealed ??= (await api(`/users/${u.id}/key`)).key);
+    keyWrap.append(
+      keyText,
+      smallButton('Ver', 'ghost', async (e) => {
+        const showing = e.target.textContent === 'Ocultar';
+        keyText.textContent = showing ? '••••••' : await fetchKey();
+        e.target.textContent = showing ? 'Ver' : 'Ocultar';
+      }),
+      smallButton('Copiar', 'ghost', async (e) => copyText(e.target, `Login: ${u.login}   Key: ${await fetchKey()}`))
+    );
+    keyCell.append(keyWrap);
 
     const status = document.createElement('span');
-    status.className = `badge ${c.active && !expired ? 'on' : 'off'}`;
-    status.textContent = !c.active ? 'Revogado' : expired ? 'Expirado' : 'Ativo';
+    status.className = `badge ${u.active && !expired ? 'on' : 'off'}`;
+    status.textContent = !u.active ? 'Desativado' : expired ? 'Expirado' : 'Ativo';
     tr.insertCell().append(status);
 
-    tr.insertCell().textContent = c.expires_at ? fmtDate(c.expires_at) : 'Nunca';
-    tr.insertCell().textContent = c.usage_count;
-    tr.insertCell().textContent = fmtDate(c.last_used_at);
+    tr.insertCell().textContent = u.expires_at ? fmtDate(u.expires_at) : 'Nunca';
+    tr.insertCell().textContent = u.usage_count;
+    tr.insertCell().textContent = fmtDate(u.last_used_at);
 
     const actions = document.createElement('div');
     actions.className = 'row';
-    const toggle = document.createElement('button');
-    toggle.className = 'ghost small';
-    toggle.textContent = c.active ? 'Revogar' : 'Reativar';
-    toggle.onclick = async () => {
-      await api(`/codes/${c.id}`, { method: 'PATCH', body: { active: !c.active } });
-      loadCodes();
-    };
-    const del = document.createElement('button');
-    del.className = 'danger small';
-    del.textContent = 'Excluir';
-    del.onclick = async () => {
-      if (!confirm('Excluir este código permanentemente?')) return;
-      await api(`/codes/${c.id}`, { method: 'DELETE' });
-      loadCodes();
-    };
-    actions.append(toggle, del);
+    actions.append(
+      smallButton('Trocar key', 'ghost', async () => {
+        const novo = prompt(`Nova key para "${u.login}" (deixe vazio para gerar uma automática):`, '');
+        if (novo === null) return;
+        try {
+          const { key } = await api(`/users/${u.id}`, { method: 'PATCH', body: { key: novo } });
+          showNewUser(u.login, key);
+          loadUsers();
+        } catch (err) { alert(err.message); }
+      }),
+      smallButton(u.active ? 'Desativar' : 'Ativar', 'ghost', async () => {
+        await api(`/users/${u.id}`, { method: 'PATCH', body: { active: !u.active } });
+        loadUsers();
+      }),
+      smallButton('Excluir', 'danger', async () => {
+        if (!confirm(`Excluir o usuário "${u.login}"?`)) return;
+        await api(`/users/${u.id}`, { method: 'DELETE' });
+        loadUsers();
+      })
+    );
     tr.insertCell().append(actions);
   }
 }
 
-$('#code-form').addEventListener('submit', async (e) => {
+$('#user-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const created = await api('/codes', {
-    method: 'POST',
-    body: { label: $('#code-label').value, expiresInDays: $('#code-days').value || null },
-  });
-  $('#new-code-value').textContent = created.code;
-  $('#new-code').hidden = false;
-  $('#code-label').value = '';
-  $('#code-days').value = '';
-  loadCodes();
+  $('#user-error').textContent = '';
+  try {
+    const created = await api('/users', {
+      method: 'POST',
+      body: {
+        login: $('#user-login').value,
+        key: $('#user-key').value,
+        expiresInDays: $('#user-days').value || null,
+      },
+    });
+    showNewUser(created.login, created.key);
+    e.target.reset();
+    loadUsers();
+  } catch (err) {
+    $('#user-error').textContent = err.message;
+  }
 });
 
-$('#copy-code').addEventListener('click', async () => {
-  await navigator.clipboard.writeText($('#new-code-value').textContent);
-  $('#copy-code').textContent = 'Copiado!';
-  setTimeout(() => ($('#copy-code').textContent = 'Copiar'), 2000);
-});
+$('#copy-user').addEventListener('click', (e) => copyText(e.target, $('#new-user-value').textContent));
 
 /* ---------------- Início ---------------- */
 if (token && apiBase) api('/me').then(showApp).catch(showLogin);

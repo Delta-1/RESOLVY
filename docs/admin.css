@@ -72,3 +72,7 @@ td .row { gap: 6px; }
 .badge { font-size: .8rem; padding: 2px 8px; border-radius: 999px; }
 .badge.on { background: #dcfce7; color: var(--ok); }
 .badge.off { background: #fee2e2; color: var(--danger); }
+
+#user-form input { flex: 1 1 180px; }
+code.key { font-size: .95rem; min-width: 70px; }
+td .row { flex-wrap: nowrap; }
