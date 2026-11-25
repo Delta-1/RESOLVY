@@ -13,7 +13,7 @@ Assistente de leitura e acessibilidade web com IA, em três partes:
  ┌──────────────────┐  HTTPS+token  ┌───────────────────────┐   chave da API  ┌──────────┐
  │ Painel admin     │ ────────────▶ │ /admin/api/*          │ ──────────────▶ │    IA    │
  └──────────────────┘               │ /api/auth/verify      │                 └──────────┘
- ┌──────────────────┐ HTTPS+código  │ /api/analyze          │
+ ┌──────────────────┐ HTTPS+login   │ /api/analyze          │
  │ Extensão Chrome  │ ────────────▶ │ SQLite no Volume      │
  └──────────────────┘               └───────────────────────┘
 ```
@@ -29,7 +29,7 @@ resolvy/
 │   ├── package.json
 │   └── src/
 │       ├── server.js           # rotas, CORS, autenticação
-│       ├── db.js               # SQLite, criptografia, códigos, sessões do painel
+│       ├── db.js               # SQLite, criptografia, usuários, sessões do painel
 │       └── ai.js               # prompts e chamadas ao Gemini / OpenAI
 ├── docs/                       # → GitHub Pages (pasta /docs)
 │   ├── index.html              # painel administrativo
@@ -58,7 +58,7 @@ resolvy/
    - **Networking → Generate Domain** — gera algo como `https://resolvy-production.up.railway.app`.
 3. **Adicione um Volume** (clique com o botão direito no serviço → *Attach Volume*, ou `Ctrl/⌘ + K` → *Volume*). Mount path: `/data`.
    O servidor detecta o volume sozinho (`RAILWAY_VOLUME_MOUNT_PATH`) e salva o banco em `/data/resolvy.db`.
-   **Sem volume, códigos e chaves são apagados a cada deploy.**
+   **Sem volume, usuários e chaves são apagados a cada deploy.**
 4. Em **Variables**, cadastre:
 
    | Variável | Valor |
@@ -147,7 +147,7 @@ Modos de `/api/analyze`: `resumo`, `acessibilidade`, `pergunta`.
 
 - Senha do painel comparada em tempo constante; sessões com token aleatório (só o hash fica no banco).
 - CORS: painel só a partir de `ADMIN_ORIGINS`; API só a partir de `chrome-extension://` (e dos IDs em `ALLOWED_EXTENSION_IDS`).
-- Rate limit no login, na verificação de códigos e na análise (com o IP real atrás do proxy do Railway).
+- Rate limit no login, na verificação de login e na análise (com o IP real atrás do proxy do Railway).
 - Chaves de API criptografadas com AES-256-GCM; o painel só mostra os 4 últimos caracteres.
 - Usuários da extensão com login + key (key de 4 a 64 caracteres, escolhida ou gerada com 6 caracteres). A key fica criptografada com a `ENCRYPTION_KEY` para que o administrador possa consultá-la no painel; validade e desativação opcionais.
 - Valores digitados em formulários nunca são enviados; o texto da página é tratado como dado no prompt.
