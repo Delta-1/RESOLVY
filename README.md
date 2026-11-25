@@ -135,6 +135,16 @@ Com `docs/config.js` vazio, o painel local usa o próprio servidor. A extensão 
 
 Modos de `/api/analyze`: `resumo`, `acessibilidade`, `pergunta`.
 
+## Atalhos de teclado
+
+| Ação | Windows / Linux | Mac |
+|---|---|---|
+| Resumir a página (ou o trecho selecionado) | `Ctrl+Q` | `Control+Q` |
+| Guia de acessibilidade | `Alt+Q` | `Option+Q` |
+| Abrir a caixa de pergunta no quadro | `Alt+Shift+Q` | `Option+Shift+Q` |
+
+Cada usuário pode trocar as teclas: popup do Resolvy → **Alterar atalhos** (abre `chrome://extensions/shortcuts`). O Chrome não permite que a extensão altere os atalhos por código; se uma tecla sugerida já estiver em uso por outra extensão, ela aparece como "não definido" até ser configurada.
+
 ## Interação com o DOM
 
 - O `content.js` atribui ids curtos (`r0`, `r1`…) aos elementos interativos visíveis e envia a lista junto com o texto.

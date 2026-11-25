@@ -52,14 +52,29 @@ async function apiFetch(serverUrl, path, { auth, body } = {}) {
   return data;
 }
 
-/** Injeta o content script (se ainda não estiver na aba) e dispara a análise. */
-async function runInTab(tabId, mode = 'resumo', question = '') {
-  const { login, key } = await getConfig();
-  if (!login || !key) throw new Error('Faça login no popup da extensão (login e key).');
+/** Injeta o content script na aba (se ainda não estiver lá). */
+async function inject(tabId) {
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
   } catch {
     throw new Error('Esta página não permite extensões (ex.: páginas internas do Chrome ou da Web Store).');
+  }
+}
+
+/** Dispara uma análise na aba. Sem login, mostra o aviso no próprio quadro da página. */
+async function runInTab(tabId, mode = 'resumo', question = '') {
+  await inject(tabId);
+  const { login, key } = await getConfig();
+  if (!login || !key) {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'resolvy:error',
+      message: 'Faça login: clique no ícone do Resolvy na barra do Chrome e entre com seu login e key.',
+    });
+    return;
+  }
+  if (mode === 'pergunta' && !question) {
+    await chrome.tabs.sendMessage(tabId, { type: 'resolvy:ask' }); // abre a caixa de pergunta no quadro
+    return;
   }
   await chrome.tabs.sendMessage(tabId, { type: 'resolvy:run', mode, question });
 }
@@ -113,12 +128,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // resposta assíncrona
 });
 
-// Atalho de teclado (Alt+Shift+R)
-chrome.commands.onCommand.addListener(async (command, tab) => {
-  if (command !== 'analyze-page' || !tab?.id) return;
+// Atalhos de teclado (editáveis em chrome://extensions/shortcuts)
+const COMMAND_MODES = {
+  'analisar-resumo': 'resumo',
+  'analisar-acessibilidade': 'acessibilidade',
+  perguntar: 'pergunta',
+};
+
+async function handleCommand(command, tab) {
+  const mode = COMMAND_MODES[command];
+  if (!mode || !tab?.id) return;
   try {
-    await runInTab(tab.id, 'resumo');
+    await runInTab(tab.id, mode);
   } catch (err) {
+    // Páginas onde não dá para injetar (chrome://, Web Store): avisa no ícone.
     console.warn('[Resolvy]', err.message);
+    chrome.action.setBadgeBackgroundColor({ color: '#b91c1c', tabId: tab.id });
+    chrome.action.setBadgeText({ text: '!', tabId: tab.id });
+    chrome.action.setTitle({ title: `Resolvy: ${err.message}`, tabId: tab.id });
   }
-});
+}
+
+chrome.commands.onCommand.addListener(handleCommand);

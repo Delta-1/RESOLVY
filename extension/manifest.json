@@ -2,10 +2,14 @@
   "manifest_version": 3,
   "name": "Resolvy – Assistente de Leitura",
   "short_name": "Resolvy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Resume e explica o conteúdo da página atual com IA, com foco em acessibilidade e produtividade.",
   "minimum_chrome_version": "105",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -25,9 +29,24 @@
     "128": "icons/icon128.png"
   },
   "commands": {
-    "analyze-page": {
-      "suggested_key": { "default": "Alt+Shift+R" },
-      "description": "Resumir a página atual"
+    "analisar-resumo": {
+      "suggested_key": {
+        "default": "Ctrl+Q",
+        "mac": "MacCtrl+Q"
+      },
+      "description": "Resumir a página (ou o trecho selecionado)"
+    },
+    "analisar-acessibilidade": {
+      "suggested_key": {
+        "default": "Alt+Q"
+      },
+      "description": "Guia de acessibilidade da página"
+    },
+    "perguntar": {
+      "suggested_key": {
+        "default": "Alt+Shift+Q"
+      },
+      "description": "Fazer uma pergunta sobre a página"
     }
   }
 }

@@ -69,4 +69,32 @@ $('#ask-form').addEventListener('submit', (e) => {
   analyze('pergunta', q);
 });
 
+/* ---------------- Atalhos ---------------- */
+// O Chrome não deixa a extensão mudar as teclas por código: a troca é feita
+// na página chrome://extensions/shortcuts, que o botão abaixo abre.
+async function loadShortcuts() {
+  const list = $('#shortcut-list');
+  list.replaceChildren();
+  const order = ['analisar-resumo', 'analisar-acessibilidade', 'perguntar', '_execute_action'];
+  const commands = (await chrome.commands.getAll())
+    .filter((c) => c.name !== '_execute_action' || c.shortcut)
+    .sort((x, y) => order.indexOf(x.name) - order.indexOf(y.name));
+  for (const c of commands) {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.textContent = c.name === '_execute_action' ? 'Abrir este menu' : c.description;
+    const kbd = document.createElement('kbd');
+    kbd.textContent = c.shortcut || 'não definido';
+    if (!c.shortcut) kbd.classList.add('none');
+    li.append(name, kbd);
+    list.append(li);
+  }
+}
+
+$('#edit-shortcuts').addEventListener('click', () => {
+  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+  window.close();
+});
+
 init();
+loadShortcuts();

@@ -265,6 +265,15 @@
     .btn.confirm, .btn.confirm:hover { background: #b45309; border-color: #b45309; color: #fff; }
     .btn:disabled { opacity: .7; cursor: default; }
     footer { padding: 6px 14px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); }
+    .ask { display: grid; gap: 8px; }
+    .ask label { font-weight: 600; font-size: 13px; }
+    .ask textarea {
+      font: inherit; color: var(--text); background: var(--surface); resize: vertical;
+      border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; min-height: 60px;
+    }
+    .ask textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .ask .hint { color: var(--muted); font-size: 12px; }
+    .ask .btn { justify-self: start; }
     .panel.min { width: auto; }
     .panel.min .body, .panel.min footer { display: none; }
     .panel.min header { border-bottom: 0; }
@@ -286,7 +295,7 @@
           <button class="icon-btn" data-act="close" title="Fechar (Esc)" aria-label="Fechar">×</button>
         </header>
         <div class="body" aria-live="polite"></div>
-        <footer>Esc fecha · Alt+Shift+R resume a página</footer>
+        <footer>Esc fecha · atalhos editáveis no ícone do Resolvy</footer>
       </section>`;
     panel = shadow.querySelector('.panel');
     bodyEl = shadow.querySelector('.body');
@@ -327,8 +336,39 @@
     bodyEl.append(div);
   }
 
+  /** Caixa de pergunta dentro do quadro (aberta pelo atalho "perguntar"). */
+  function renderAsk() {
+    ensureWidget();
+    panel.classList.remove('min');
+    setSubtitle('Perguntar sobre a página');
+    clearHighlights();
+    bodyEl.replaceChildren();
+    const form = document.createElement('form');
+    form.className = 'ask';
+    form.innerHTML = `
+      <label for="resolvy-q">Sua pergunta</label>
+      <textarea id="resolvy-q" maxlength="500" placeholder="Ex.: Qual é o prazo?"></textarea>
+      <span class="hint">Enter envia · Shift+Enter quebra linha</span>
+      <button class="btn primary" type="submit">Perguntar</button>`;
+    const textarea = form.querySelector('textarea');
+    const submit = () => {
+      const q = textarea.value.trim();
+      if (q) run('pergunta', q);
+      else textarea.focus();
+    };
+    form.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
+    textarea.addEventListener('keydown', (e) => {
+      e.stopPropagation(); // não deixa a página reagir às teclas digitadas
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+      if (e.key === 'Escape') closeWidget();
+    });
+    bodyEl.append(form);
+    setTimeout(() => textarea.focus(), 0);
+  }
+
   function renderError(message) {
     ensureWidget();
+    panel.classList.remove('min');
     bodyEl.replaceChildren();
     const p = document.createElement('p');
     p.className = 'answer error';
@@ -446,5 +486,7 @@
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === 'resolvy:run') run(msg.mode || 'resumo', msg.question || '');
+    else if (msg?.type === 'resolvy:ask') renderAsk();
+    else if (msg?.type === 'resolvy:error') renderError(msg.message);
   });
 })();
